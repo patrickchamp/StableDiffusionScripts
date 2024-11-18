@@ -34,10 +34,6 @@ This script was created to help save disk space for an archive of AI-generated a
      pip install tqdm
      ```
 
-## Warning
-- It only saves that specific metadata, not the full exif info. It extracts A1111 parameters from the Exif "Parameters" field and ComfyUI workflows from the Exif "Prompt" field. If neither are present it does not create a json or txt file.
-
-
 ## Installation
 
 1. Clone or download this repository:
@@ -104,7 +100,7 @@ Review/
 ## Known Limitations
 
 - **Requires Proper Environment Setup**: Ensure that both ImageMagick and ExifTool are installed and configured as environment variables.
-- **Metadata Extraction**: If the embedded metadata does not conform to expected formats, it may not be properly extracted.
+- **Metadata Extraction**: If the embedded metadata does not conform to expected formats, it may not be properly extracted. It only saves that specific metadata, not the full exif info. It extracts A1111 parameters from the Exif "Parameters" field and ComfyUI workflows from the Exif "Prompt" field. If neither are present it does not create a json or txt file.
 
 ## Contributing
 
