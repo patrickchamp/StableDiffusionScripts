@@ -3,20 +3,31 @@ import subprocess
 from pathlib import Path
 import shutil
 from tqdm import tqdm
+from typing import Optional, Dict
 
+# Constants for configuration
+IMAGE_QUALITY = 90
+HEIC_COMPRESSION = 10
 
-def compress_to_avif(png_path, avif_path):
+def compress_to_avif(png_path: Path, avif_path: Path) -> bool:
     """
     Compress a PNG image to AVIF format using ImageMagick.
+    
+    Args:
+        png_path (Path): The path to the input PNG file.
+        avif_path (Path): The path where the compressed AVIF file will be saved.
+    
+    Returns:
+        bool: True if compression was successful, False otherwise.
     """
     try:
         subprocess.run(
             [
-                "magick",
+                "magick",  # ImageMagick command
                 str(png_path),
-                "-quality", "90",
-                "-define", "heic:compression=10",
-                str(avif_path)
+                "-quality", str(IMAGE_QUALITY),
+                "-define", f"heic:compression={HEIC_COMPRESSION}",
+                str(avif_path),
             ],
             check=True
         )
@@ -26,25 +37,34 @@ def compress_to_avif(png_path, avif_path):
         return False
 
 
-def move_to_review_folder(file_path, root_folder, review_folder):
+def move_file_with_structure(file_path: Path, root_folder: Path, destination_folder: Path) -> None:
     """
-    Move a file to the review folder, preserving relative directory structure.
+    Move a file to a destination folder, preserving its relative directory structure.
+    
+    Args:
+        file_path (Path): The original file path.
+        root_folder (Path): The root folder containing all files.
+        destination_folder (Path): The destination folder for the file.
     """
     relative_path = file_path.relative_to(root_folder)
-    destination_path = review_folder / relative_path
-
-    # Ensure destination folder exists
+    destination_path = destination_folder / relative_path
     destination_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
         shutil.move(str(file_path), str(destination_path))
     except Exception as e:
-        print(f"Error moving {file_path} to review folder: {e}")
+        print(f"Error moving {file_path} to {destination_folder}: {e}")
 
 
-def extract_metadata_with_exiftool(image_path):
+def extract_metadata(image_path: Path) -> Dict[str, str]:
     """
-    Extract metadata using ExifTool.
+    Extract metadata from an image using ExifTool.
+    
+    Args:
+        image_path (Path): The image file path.
+    
+    Returns:
+        Dict[str, str]: Metadata as key-value pairs, or an empty dictionary on failure.
     """
     try:
         result = subprocess.run(
@@ -53,123 +73,117 @@ def extract_metadata_with_exiftool(image_path):
             stderr=subprocess.PIPE,
             text=True,
         )
-        exif_output = result.stdout
         metadata = {}
-
-        for line in exif_output.splitlines():
+        for line in result.stdout.splitlines():
             if ":" in line:
                 key, value = line.split(":", 1)
                 metadata[key.strip()] = value.strip()
-
         return metadata
     except Exception as e:
-        print(f"Error extracting metadata with ExifTool: {e}")
+        print(f"Error extracting metadata for {image_path}: {e}")
         return {}
 
 
-def get_unique_filename(file_path):
+def save_metadata(file_path: Path, content: str, extension: str) -> None:
     """
-    Generate a unique filename if the file already exists.
+    Save metadata content to a file (either JSON or plain text).
+    
+    Args:
+        file_path (Path): The original file path.
+        content (str): The metadata content to save.
+        extension (str): The file extension ('.json' or '.txt').
+    """
+    save_path = file_path.with_suffix(extension)
+    save_path = ensure_unique_filename(save_path)
+    mode, data = ("w", content)
+
+    if extension == ".json":
+        try:
+            data = json.dumps(json.loads(content), ensure_ascii=False, indent=4)
+        except json.JSONDecodeError:
+            extension = "txt"
+
+    with open(save_path, mode, encoding="utf-8") as file:
+        file.write(data)
+
+    print(f"Saved metadata to {save_path}")
+
+
+def ensure_unique_filename(file_path: Path) -> Path:
+    """
+    Generate a unique filename by appending a counter if the file already exists.
+    
+    Args:
+        file_path (Path): The desired file path.
+    
+    Returns:
+        Path: A unique file path.
     """
     counter = 1
-    new_file_path = file_path
-    while new_file_path.exists():
-        new_file_path = file_path.with_stem(f"{file_path.stem}_{counter}")
+    unique_path = file_path
+    while unique_path.exists():
+        unique_path = file_path.with_stem(f"{file_path.stem}_{counter}")
         counter += 1
-    return new_file_path
+    return unique_path
 
 
-def process_png_file(image_path, root_folder, review_folder):
+def process_png_file(image_path: Path, root_folder: Path, review_folder: Path) -> None:
     """
-    Process a PNG file by extracting metadata, saving JSON/TXT files, compressing to AVIF,
-    and moving the original file to the review folder.
+    Process a PNG file by extracting metadata, saving relevant fields, compressing to AVIF, 
+    and moving the original to a review folder.
+    
+    Args:
+        image_path (Path): The PNG file path.
+        root_folder (Path): Root folder containing all images.
+        review_folder (Path): Destination folder for the original PNG file.
     """
-    metadata = extract_metadata_with_exiftool(image_path)
+    metadata = extract_metadata(image_path)
 
-    # Check for 'Prompt' field in metadata
-    if "Prompt" in metadata:
-        prompt_content = metadata["Prompt"]
-        try:
-            # Attempt to parse 'Prompt' content as JSON
-            prompt_data = json.loads(prompt_content)
-            json_file_path = image_path.with_suffix('.json')
-
-            # Generate a unique filename if needed
-            json_file_path = get_unique_filename(json_file_path)
-
-            with open(json_file_path, "w", encoding="utf-8") as json_file:
-                json.dump(prompt_data, json_file, ensure_ascii=False, indent=4)
-            print(f"Prompt JSON saved: {json_file_path}")
-        except json.JSONDecodeError:
-            # If not valid JSON, save as raw text
-            txt_file_path = image_path.with_suffix('.txt')
-
-            # Generate a unique filename if needed
-            txt_file_path = get_unique_filename(txt_file_path)
-
-            with open(txt_file_path, "w", encoding="utf-8") as txt_file:
-                txt_file.write(prompt_content)
-            print(f"Prompt saved as TXT: {txt_file_path}")
-    elif "Parameters" in metadata:
-        # Extract 'Parameters' field and save as a TXT file
-        txt_file_path = image_path.with_suffix('.txt')
-
-        # Generate a unique filename if needed
-        txt_file_path = get_unique_filename(txt_file_path)
-
-        with open(txt_file_path, "w", encoding="utf-8") as txt_file:
-            txt_file.write(metadata["Parameters"])
-        print(f"Parameters saved as TXT: {txt_file_path}")
+    # Save metadata if available
+    for field in ("Prompt", "Parameters"):
+        if field in metadata:
+            save_metadata(image_path, metadata[field], ".json" if field == "Prompt" else ".txt")
+            break
     else:
-        print(f"No 'Prompt' or 'Parameters' found for: {image_path}")
+        print(f"No 'Prompt' or 'Parameters' found for {image_path}")
 
-    # Compress the PNG file to AVIF format
-    avif_file_path = image_path.with_suffix('.avif')
-    if compress_to_avif(image_path, avif_file_path):
-        # Move original file to the review folder
-        move_to_review_folder(image_path, root_folder, review_folder)
+    # Compress PNG to AVIF format
+    avif_path = image_path.with_suffix(".avif")
+    if compress_to_avif(image_path, avif_path):
+        move_file_with_structure(image_path, root_folder, review_folder)
 
 
-def process_images_recursively(folder_path, review_folder):
+def process_images(folder_path: Path, review_folder: Path) -> None:
     """
     Recursively process all PNG files in a folder.
+    
+    Args:
+        folder_path (Path): Path to the folder containing PNG files.
+        review_folder (Path): Path to the folder for processed files.
     """
-    png_files = list(folder_path.rglob('*.png'))  # Find all PNG files
-    total_files = len(png_files)
-
-    # Display a progress bar for file processing
-    with tqdm(total=total_files, desc="Processing PNG files") as progress_bar:
+    png_files = list(folder_path.rglob("*.png"))
+    with tqdm(total=len(png_files), desc="Processing PNG files") as progress_bar:
         for image_path in png_files:
             process_png_file(image_path, folder_path, review_folder)
-            progress_bar.update(1)  # Update progress bar
+            progress_bar.update(1)
 
 
-def main():
+def main() -> None:
     """
-    Main entry point for the script. Prompts the user for input paths and processes images.
+    Main script entry point. Prompts the user for input paths and initiates processing.
     """
-    # Ask the user for the images folder path
     images_folder = Path(input("Path to images folder: ").strip()).resolve()
-
-    # Validate the images folder path
     if not images_folder.is_dir():
         print("Invalid images folder path.")
         return
 
-    # Prompt the user for the review folder path, defaulting to 'Review' in the images folder
-    review_folder_input = input(
-        "Path to review folder (leave blank to use the default 'Review' folder in the images folder): "
-    ).strip()
-
-    # Resolve the review folder path based on user input
-    review_folder = Path(review_folder_input).resolve() if review_folder_input else images_folder / "Review"
+    review_folder = input("Path to review folder (leave blank for default): ").strip()
+    review_folder = Path(review_folder).resolve() if review_folder else images_folder / "Review"
+    review_folder.mkdir(parents=True, exist_ok=True)
 
     print(f"Review folder set to: {review_folder}")
-
-    # Process all PNG files recursively
-    process_images_recursively(images_folder, review_folder)
-
-    input("Press Enter to exit...")
+    process_images(images_folder, review_folder)
+    print("Processing complete.")
 
 
 if __name__ == "__main__":
